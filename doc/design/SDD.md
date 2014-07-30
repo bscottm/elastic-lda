@@ -13,37 +13,31 @@ documents. The basic process for producing a topic model is:
 
 1. Create a corpus dictionary
     - Preprocess each document.
-
-        This includes removing stop words, eliminating hyphenation (if possible, this is hard to do), removing text that
-        looks like chapter headers (whenever possible), singularizing plural words, etc. The result of this phase is the
-        "bag of words" for each document.
-
     - Create a bijective mapping between each unique word in the corpus' documents to a number (identifier).
 2. Convert the corpus from its textual format into its corresponding numeric matrix format.
 3. Run the _LDA_ algorithm over the numeric matrix to generate the topic model **for that corpus**.
 4. Convert the numeric topic model matrix back into a human-readable form via the corpus dictionary.
 
-The Python-based [gensim] package provides a good introduction and examples on how to manually perform _LDA_ over a
-corpus. [gensim] does not perform any preprocessing; you have to build your corpus as a Python list of word lists before
-you execute _LDA_. [gensim] will handle converting your list of word lists into a corpus dictionary **after** you
-preprocess your documents.
+Preprocessing is the crucial step for generating the _LDA_ topic model. This includes removing stop words, eliminating hyphenation (if possible, this is hard to do), removing text that looks like chapter headers (whenever possible), singularizing plural words, etc. The result of this phase is the "bag of words" for each document.
+
+The Python-based [gensim] package provides a good introduction and examples on how to manually perform _LDA_ over a corpus. [gensim] does not perform any preprocessing; you have to build your corpus as a Python list of word lists before you execute _LDA_. [gensim] will handle converting your list of word lists into a corpus dictionary **after** you preprocess your documents.
 
 ## Use Cases
 
 1. The basic use case for this plugin is generating the topic models for a _type_ within an Elasticsearch _index_.
-   [Elasticsearch] provides a RESTful interface wherein _index_ and _type_ are the top two levels of a namespace that
-   identify a group of documents, viz. `http://localhost:9200/index/type/document`.
 
-    The core idea is that an _index_'s _type_ provides documents that are the _LDA_ corpus for which a topic model
-    is generated.
+    [Elasticsearch] provides a RESTful interface wherein _index_ and _type_ are the top two levels of a namespace that identify a group of documents, viz. `http://localhost:9200/index/type/document`. _index_ is a related group of types; _type_ is a related group of documents.
 
-    The data modeler or Elasticsearch developer creates a mapping on a type, similar to how the [mapper attachments]
-    [mapper-attachments] plugin operates:
+    The core idea is that a document property inside an _index_'s _type_ identifies the _LDA_ corpus for which a topic model is generated or initially trained. 
+
+    For example, assume that the data modeler or Elasticsearch developer has created an index called _bibdata_ for bibliographic data sets. Within the _bibdata_ index, there is a type called _journalPapers_, which contain journal paper information. The journal paper information has the abstracts of the bibliographic entries. This plugin's intended use is to generate the _LDA_-based topic models extracted from all of the documents stored within _bibdata/jornalPapers_ type.
+
+    To do this, the data modeler or Elasticsearch developer creates a mapping on a type, similar to how the [mapper attachments][mapper-attachments] plugin operates:
 
     ```javascript
-    PUT /test/myindex/mytype/_mapping
+    PUT /test/bibdata/journalPapers/_mapping
     {
-    	"mytype": {
+    	"journalPapers": {
     		"properties": {
     			"mytext": "string",
     			"lda_result" : { "type": "lda_topic_model", "origin": "mytext" }
@@ -52,12 +46,12 @@ preprocess your documents.
     }
     ```
 
-    where `lda_result` is the designated document property in which the _LDA_ topics are stored.
+    where `lda_result` is the designated document property under which the _LDA_ topics are stored.
 
 2. Query by topic keywords, topic relevance and return a list of documents.
 
     A document stored in an [Elasticsearch] _index/type_ has two additional properties that respectively store a list of
-    topics and a list of topic relevances. The _ElasticLDA_ plugin adds these properties to the document via
+     topics and a list of topic relevances. The _ElasticLDA_ plugin adds these properties to the document via
     [Elasticsearch]'s index mapping API when the index is initially created.
 
     ```json
@@ -69,8 +63,7 @@ preprocess your documents.
     }
     ```
 
-    `(topic, relevance)` tuples can be regenerated via a `zip` ([Python example][zip]). A destructuring `unzip` function
-    splits the two lists apart to maintain ordering between the two lists. Javascript does not support a native tuple type.
+    `(topic, relevance)` tuples can be regenerated via a `zip` ([Python example][zip]). A destructuring `unzip` function splits the two lists apart to maintain ordering between the two lists. Javascript does not support a native tuple type.
 
     An alternative representation is a list of relevance/topic objects:
 
@@ -89,8 +82,7 @@ preprocess your documents.
     better for applying arithmetic operators in a query, e.g., `lda_result.relevance >= 0.05`.
 
     The rationale for adding these properties is convenience. Otherwise, the user would have to perform additional
-    queries in a different _type_ or _index/type_ to perform a relational join to determine which topics correspond to a
-    document.
+    queries in a different _type_ or _index/type_ to perform a relational join to determine which topics correspond to a document.
 
 3. Query by topic model, returning the topic model and document relevance.
 
@@ -104,22 +96,19 @@ preprocess your documents.
    			"words": [ "blue", "cheese", "danish", "speciality" ],
    			"relevance": [ 0.1024, 0.10101, 0.002, 0.001 ],
    			"documents": [
-   				{ "id": "myindex/mytype/doc001", "doc_relevance": 0.999 },
-   				{ "id": "myindex/mytype/doc002", "doc_relevance": 0.402 },
-   				{ "id": "myindex/mytype/doc013", "doc_relevance": 0.100 }
+   				{ "id": "bibdata/journalPapers/doc001", "doc_relevance": 0.999 },
+   				{ "id": "bibdata/journalPapers/doc002", "doc_relevance": 0.402 },
+   				{ "id": "bibdata/journalPapers/doc013", "doc_relevance": 0.100 }
    			]
    		}
     }
     ```
 
     In this simple example, the topic is "blue cheese danish specialty", which has three associated documents.
-    `myindex/mytype/doc001` is strongly associated with this topic (0.999), whereas `myindex/mytype/doc013` is weakly
-    associated with the topic (0.100).
+    `bibdata/journalPapers/doc001` is strongly associated with this topic (0.999), whereas `bibdata/journalPapers/doc013` is weakly associated with the topic (0.100).
 
     This use case allows a querier to search based on topic keywords, document relevance. It requires a separate _type_
-    stored under the index that is unique from all of the other types the data modeler or Elasticsearch developer embeds
-    in an _index_. These meta-types would be generated by plugin when the _index_'s mapping is initially defined by
-    reserving all names starting with a specific prefix, e.g., _elda_, to generate the meta-type name, e.g., _elda\_mytype_.
+    stored under the index that is unique from all of the other types the data modeler or Elasticsearch developer embeds in an _index_. These meta-types would be generated by plugin when the _index_'s mapping is initially defined by reserving all names starting with a specific prefix, e.g., _elda_, to generate the meta-type name, e.g., _elda\_journalPapers_.
 
 [ElasticSearch]: http://www.elasticsearch.org/
 [WikiLDA]: https://en.wikipedia.org/wiki/Latent_Dirichlet_allocation
